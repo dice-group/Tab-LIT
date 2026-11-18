@@ -44,27 +44,17 @@ released protocol: offsets are estimated from all literals, test included, over
 all triples.
 
 Datasets: DB15K, FB15k-237 and YAGO15k, read from `$TABLIT_KG_ROOT/<dataset>`
-(default `../KGs`). Each dataset needs `train/valid/test.txt` triples and
+(default `../KGs`). Each needs `train/valid/test.txt` triples and
 `literals/{train,valid,test}.txt` (entity, attribute, value), used as shipped.
-The `KGs/` folder of the LitEm repository below has all three in this layout,
-byte for byte the files the results were computed on. FB15k-237 also needs
-`entity2text.txt` (Freebase id, label) to name its entities in prompts, as
-distributed with KG-BERT; it is read only when the language model is asked
-again.
+FB15k-237 also needs `entity2text.txt` to name its entities in prompts.
 
 ## Results
 
 Means over seeds 1 to 3, on attributes with more than 40 test rows. A cell is
-left empty (`--`) unless all three seeds ran. LitEm is not rerun. Its values are
-means over the five runs behind the LitEm paper's tables (TransE, d = 128; Table 2
-for FB15k-237 and YAGO15k, Table 4 for DB15K), read from those runs' result
-files into `results/<dataset>_litem.csv`. The MAE matches the paper. The paper
-does not print RMSE, but the run files hold it. LitEm saved no predictions, so
-its R² is recovered from the RMSE on its own test rows. These are the same rows
-as ours, except DB15K `birthDate`, where LitEm also scores 2 literals whose
-entity is missing from the training graph (504 rows, not 502).
-MrAP is rerun as described above. Package versions per run are in
-`results/*_manifest.json`. Dates are in years, coordinates in degrees, heights
+left empty (`--`) unless all three seeds ran. LitEm is not rerun: its values
+are means over its five runs (TransE, d = 128), read from its result files, and
+its R² is recovered from the RMSE. It scores the same test rows, except two
+extra on DB15K `birthDate`. Dates are in years, coordinates in degrees, heights
 in meters.
 
 ### Shipped splits: MAE, RMSE and R²
@@ -172,33 +162,20 @@ What is the date of birth of Roy Haynes?
 Answer with the value only, as YYYY-MM-DD (YYYY alone if only the year is known; a minus sign for BCE). If unsure, give your best estimate.
 ```
 
-The two triples prompts are built from the training graph and the training
-literals. The model has no access to the dataset: each bracketed number is
-looked up in `literals/train.txt` by `src/llm.py` and printed into the prompt
-as text. For a test row (entity, attribute):
+The model has no access to the dataset; the triples prompts are text built from
+it. For a test row (entity, attribute):
 
-1. Every training triple with the entity as head or tail is collected, and the
-   entity is replaced by X. The other entity and the relation are written as
-   readable names: the last segment of the IRI for DB15K and YAGO15k, and the
-   label from `entity2text.txt` for FB15k-237. A triple that the graph file
-   repeats is listed once.
-2. For `graph_values` only, each neighbor is looked up in the training literals,
-   and up to three of its values are written in brackets after the triple. The
-   asked attribute comes first if the neighbor has it, and the neighbor's other
-   attributes follow in alphabetical order. Dates are written as year and month
-   (`1955-03`), and heights, weights and areas carry their unit.
-3. If more than 30 triples remain, 30 are kept. For `graph_values`, the triples
-   whose neighbor has a value of the asked attribute are kept first, then those
-   whose neighbor has any value, then the rest, in random order within each
-   group. For `graph`, the 30 are a random choice. One random generator, seeded
-   with 1, serves all rows.
-4. The kept triples go above the question, with X in place of the entity's name.
+1. The entity's training triples, as head or tail, are written with X in place
+   of the entity and readable names for the rest (the IRI's last segment, or
+   the `entity2text.txt` label on FB15k-237).
+2. For `graph_values` only, up to three of each neighbor's values from
+   `literals/train.txt` follow in brackets, the asked attribute first.
+3. At most 30 triples are kept. For `graph_values`, neighbors with a value of
+   the asked attribute come first, then those with any value; for `graph`, the
+   30 are random (seed 1).
 
-The entity's own values are never shown, and only training triples and training
-values are read, so no test value can appear in a prompt. The prompt does not
-say how a neighbor's value relates to the asked one. The model has to infer
-whether, for example, the latitude of a person's birthplace or the death date
-of a collaborator says anything about the asked value.
+The entity's own values are never shown, so no test value reaches a prompt. The
+model has to infer how a neighbor's value relates to the asked one.
 
 The `graph_values` prompt for Roy Haynes, shortened:
 
@@ -216,32 +193,18 @@ What is the date of birth of X?
 Answer with the value only, as YYYY-MM-DD (YYYY alone if only the year is known; a minus sign for BCE). If unsure, give your best estimate.
 ```
 
-The `graph` prompt is the same without the bracketed values. Its first line is
-unchanged and still mentions values in brackets.
-
-The format hint depends on the attribute. Dates are asked for as `YYYY-MM-DD`,
-coordinates in decimal degrees (negative for south or west), height in meters,
-area in square kilometers, and population as a number of people. The prompts
-spell the units "metres" and "kilometres".
+The `graph` prompt is the same without the bracketed values. Coordinates are
+asked for in decimal degrees (negative for south or west), other quantities in
+their unit.
 
 ### Decoding and parsing
 
-Generation is greedy, with Qwen3's thinking mode
-disabled and at most 24 new tokens. The parser takes the first number in the
-reply. For dates it tries a full ISO date first, then year and month, then a
-bare year, so that a verbose reply gives its year rather than its day. It then
-converts the date to the dataset's own encoding: `year + (day of year − 1)/365`
-for DB15K, `year + month/12` for FB15k-237, and `yyyy.mmdd` for YAGO15k. For
-coordinates, a decimal number is preferred over an integer found elsewhere in
-the reply.
-
-If a reply contains no number, the same prompt is asked once more with the
-answer prefilled as "My best estimate is", and the continuation is parsed. If
-that still fails, the score uses the training median of the attribute.
-
-The retry matters mostly when the entity is anonymized: a third to over half of
-the first replies to the triples-only prompt contain no number. After the
-retry, almost every reply parses:
+Generation is greedy, with thinking disabled and at most 24 new tokens. The
+first number in the reply is parsed; dates prefer a full ISO date, then a year,
+and are converted to the dataset's own date encoding. A reply with no number is
+asked once more with the answer prefilled as "My best estimate is"; if that
+also fails, the training median is used. Retries are frequent only when the
+entity is hidden:
 
 | Dataset | Rows per prompt | Retried: name / triples / with values | Parsed after retry |
 |---|---:|---|---:|
@@ -251,45 +214,26 @@ retry, almost every reply parses:
 
 ### As a column
 
-For the `full_llm` conversion, the name-only prompt is asked
-for every (entity, attribute) cell in the train, validation and test splits, not
-only the test rows. The parsed answers form the `llm_answer` group: one column
-`llm::<a>` per attribute, `NaN` where a cell was not asked. The answer depends
-on the entity's name alone and reads no literal value, so it is the same for
-context and query rows. Which cells were asked does reveal which attributes an
-entity has, so when predicting attribute `a`, every `llm::<b>` with `b` other
-than `a` is masked. The backbone then sees the model's guess for the target as
-one more feature and learns from the context rows how far to trust it.
-
-### Files
-
-The parsed replies ship, so nothing needs the 16 GB model unless these files
-are deleted:
-
-| File | Contents |
-|---|---|
-| `llm/<dataset>_answers.csv` | name-only reply and parsed value for every cell (the answer column) |
-| `llm/<dataset>_direct.csv` | the three prompts' replies for each test row, with a flag for whether it was retried |
-| `results/<dataset>_llm_direct.csv` | per-attribute MAE, MASE and parse rate of each prompt type |
-| `llm/cache/qwen3-8b.jsonl` | not tracked: raw generations keyed by model, prefix and prompt, written by `llm`; a rerun asks only for prompts missing here |
+For the `full_llm` conversion, the name-only prompt is asked for every
+(entity, attribute) cell of all three splits. The answers form one column
+`llm::<a>` per attribute. When predicting `a`, every other `llm::<b>` is masked,
+since which cells were asked reveals which attributes an entity has. The
+backbone learns from the context rows how far to trust the answer.
 
 ### Results: MASE
 
-MASE is the MAE divided by the MAE of always predicting the attribute's
-training median, so 1.00 means no better than that constant. Each row gives the
-median MASE over the 21 attributes of the main table (more than 40 test rows),
-and how many of them have a MASE below 1. The rows differ in what produces the
-prediction:
+MASE is the MAE divided by that of predicting the training median, so 1.00 is
+no better than the median. Each row gives the median MASE over the 21 attributes
+of the main table:
 
 | Row | Protocol |
 |---|---|
-| name only, one-hop triples, triples, neighbor values | Qwen3-8B answers each test row from the matching prompt above, in one greedy run. A reply with no number after the retry is scored as the training median. |
-| conversion | The backbone is fitted in context on the `full` table, as in the main results table. MASE is averaged over seeds 1 to 3 per attribute, and an attribute counts only if all three seeds ran. |
-| + answer column | As for conversion, on the `full_llm` table, which adds Qwen3-8B's name-only answers as the `llm::<a>` columns. |
+| name only, one-hop triples, triples, neighbor values | Qwen3-8B answers each test row from that prompt, one greedy run |
+| conversion | backbone on the `full` table, mean over seeds 1 to 3 |
+| + answer column | backbone on the `full_llm` table, mean over seeds 1 to 3 |
 
-Qwen3-8B was trained on web text that may state the true values. The name-only
-rows and the answer-column rows therefore measure what the model remembers, not
-what the graph supports, and are kept apart from the main table.
+Qwen3-8B may have seen the true values in its training text, so the name-only
+and answer-column rows measure recall, not what the graph supports.
 
 <!-- BEGIN GENERATED LLM -->
 | Table or prompt | Learner | Median MASE | MASE < 1 | Attributes |
@@ -350,41 +294,11 @@ python -m src.main litem --litem_dir ...  # LitEm's run files; the results ship
 python -m src.main report --readme
 ```
 
-`experiment` writes `results/<dataset>_<backbone>_<conversion>.csv`, with one
-row per attribute, seed and split (test and validation), and a manifest with the
-package versions and the time per seed. Existing files are skipped unless you
-pass `--overwrite`. `llm` reads its replies from `llm/cache/` and asks Qwen3-8B
-only for prompts missing there.
+`experiment` writes `results/<dataset>_<backbone>_<conversion>.csv` and a
+manifest with package versions; existing files are skipped unless you pass
+`--overwrite`. `report` reads only `results/`, so it needs no GPU, weights or
+datasets. `pytest tests` runs without a GPU.
 
 On one RTX 3090, TabPFN-3.5, TabICLv2, Kumo-Tabular and GBT take about 25
-minutes together on the three datasets. Nori-1.5 takes hours, most of it on
-YAGO15k, whose largest attributes do not fit in 24 GB and fall back to the CPU.
-Asking Qwen3-8B again takes about an hour.
-
-`report` reads only `results/` and recomputes nothing, so it runs without a
-GPU, weights or datasets. It refuses to pool two files that were scored on
-different test rows for the same attribute and seed. `pytest tests` checks the
-feature groups, the target masking, answer parsing and the table code without a
-GPU.
-
-## Reproducibility
-
-TabPFN-3.5 and TabICLv2 are deterministic for a given seed. Rerunning them here
-gave the same per-attribute MAE as the runs behind the paper's main table,
-within 0.005%. The MrAP rerun matches to floating-point precision. The prompts
-`src/llm.py` builds are byte-identical to the ones the paper's replies were
-generated from, and the shipped replies parse to the same values.
-
-The paper's GBT rows were run under numpy 1.26 and scipy 1.16, not the
-versions pinned here. The feature table differs slightly between the two
-(SVD and eigenvector numerics), and GBT follows it. Under those versions the
-package reproduces the paper's GBT rows exactly; under the pinned ones a GBT
-cell moves by a median of 1% to 2% per attribute.
-
-Kumo-Tabular is not deterministic on the GPU. Two runs of the same seeds
-differed by a median of 0.7% to 3.1% in per-attribute MAE, depending on the
-dataset, and by at most 9.5% (on FB15k-237). Read a Kumo-Tabular cell to about
-two significant figures.
-
-The seed fixes the context subsample, the cross-fitting folds, the association
-SVD and the backbone's own randomness. The splits do not depend on it.
+minutes together on the three datasets; Nori-1.5 takes hours, and asking
+Qwen3-8B again about an hour.
