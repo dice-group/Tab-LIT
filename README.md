@@ -1,7 +1,6 @@
 # Tab-LIT: Numeric Literal Prediction with Tabular Foundation Models
 
-Repository for "Numeric Literal Prediction with Tabular Foundation Models". Each knowledge graph becomes one table with a row per entity. A frozen tabular foundation model then predicts each numeric attribute in context from that table, and nothing is trained. The package also reproduces the language-model comparison: Qwen3-8B answering directly, and its answers 
-added to the table as a column.
+Repository for "Numeric Literal Prediction with Tabular Foundation Models". Each knowledge graph becomes one table with a row per entity. A frozen tabular foundation model then predicts each numeric attribute in context from that table, and nothing is trained. The package also reproduces the language-model comparison: Qwen3-8B answering directly, and its answers added to the table as a column.
 
 ![Tab-LIT pipeline](figures/approach.png)
 
@@ -149,26 +148,20 @@ Lower MAE than both LitEm and MrAP: TabPFN-3.5 15/21; TabICLv2 15/21; Kumo-Tabul
 
 ## Language model for literal prediction
 
-Qwen3-8B (`src/llm.py`) is used in two ways: as a baseline that answers each
-test row directly, and as a source of one extra column in the table. Both
-start from the same kind of prompt, which names one entity and one attribute and
+Qwen3-8B (`src/llm.py`) is used in two ways. As a baseline, it answers each
+test row directly. As a feature, its answers become one extra column of the
+table. Both uses start from a prompt that names one entity and one attribute and
 asks for the value only.
 
-**Prompts.** Each test row is asked three ways, which differ in what the model
-sees:
+### Prompts
+
+Each test row is asked three ways, which differ in what the model sees:
 
 | Prompt | `arm` | The model sees |
 |---|---|---|
 | name only | `name` | the entity's name |
-| one-hop triples | `graph` | the entity anonymized as X, with up to 30 of its one-hop training triples |
-| triples, neighbor values | `graph_values` | the same triples, each followed by up to three known training values of the neighbor |
-
-Entity and relation names come from the IRIs for DB15K and YAGO15k and from
-`entity2text.txt` for FB15k-237. When an entity has more than 30 triples, those
-whose neighbor has a training value of the target attribute come first, then
-those whose neighbor has any value, then the rest. Within each group the order
-is shuffled with seed 1. Only training triples and training values are shown,
-so no test value reaches a prompt.
+| one-hop triples | `graph` | the entity hidden as X, with up to 30 of its triples from the training graph |
+| triples, neighbor values | `graph_values` | the same kind of triples, each followed by up to three training values of the neighbor |
 
 Here are the three prompts for DB15K's `birthDate` of Roy Haynes. The name-only
 prompt is:
@@ -179,8 +172,35 @@ What is the date of birth of Roy Haynes?
 Answer with the value only, as YYYY-MM-DD (YYYY alone if only the year is known; a minus sign for BCE). If unsure, give your best estimate.
 ```
 
-The `graph_values` prompt replaces the name with X and lists the facts first
-(shortened here). The `graph` prompt is the same without the bracketed values:
+The two triples prompts are built from the training graph and the training
+literals. The model has no access to the dataset: each bracketed number is
+looked up in `literals/train.txt` by `src/llm.py` and printed into the prompt
+as text. For a test row (entity, attribute):
+
+1. Every training triple with the entity as head or tail is collected, and the
+   entity is replaced by X. The other entity and the relation are written as
+   readable names: the last segment of the IRI for DB15K and YAGO15k, and the
+   label from `entity2text.txt` for FB15k-237. A triple that the graph file
+   repeats is listed once.
+2. For `graph_values` only, each neighbor is looked up in the training literals,
+   and up to three of its values are written in brackets after the triple. The
+   asked attribute comes first if the neighbor has it, and the neighbor's other
+   attributes follow in alphabetical order. Dates are written as year and month
+   (`1955-03`), and heights, weights and areas carry their unit.
+3. If more than 30 triples remain, 30 are kept. For `graph_values`, the triples
+   whose neighbor has a value of the asked attribute are kept first, then those
+   whose neighbor has any value, then the rest, in random order within each
+   group. For `graph`, the 30 are a random choice. One random generator, seeded
+   with 1, serves all rows.
+4. The kept triples go above the question, with X in place of the entity's name.
+
+The entity's own values are never shown, and only training triples and training
+values are read, so no test value can appear in a prompt. The prompt does not
+say how a neighbor's value relates to the asked one. The model has to infer
+whether, for example, the latitude of a person's birthplace or the death date
+of a collaborator says anything about the asked value.
+
+The `graph_values` prompt for Roy Haynes, shortened:
 
 ```text
 An entity X is described by these facts (known values of related entities in brackets):
@@ -196,11 +216,17 @@ What is the date of birth of X?
 Answer with the value only, as YYYY-MM-DD (YYYY alone if only the year is known; a minus sign for BCE). If unsure, give your best estimate.
 ```
 
+The `graph` prompt is the same without the bracketed values. Its first line is
+unchanged and still mentions values in brackets.
+
 The format hint depends on the attribute. Dates are asked for as `YYYY-MM-DD`,
 coordinates in decimal degrees (negative for south or west), height in meters,
-area in square kilometers, and population as a number of people.
+area in square kilometers, and population as a number of people. The prompts
+spell the units "metres" and "kilometres".
 
-**Decoding and parsing.** Generation is greedy, with Qwen3's thinking mode
+### Decoding and parsing
+
+Generation is greedy, with Qwen3's thinking mode
 disabled and at most 24 new tokens. The parser takes the first number in the
 reply. For dates it tries a full ISO date first, then year and month, then a
 bare year, so that a verbose reply gives its year rather than its day. It then
@@ -223,7 +249,9 @@ retry, almost every reply parses:
 | FB15k-237 | 2,326 | 0.5% / 33.9% / 19.4% | 100% |
 | YAGO15k | 2,354 | 0.6% / 58.8% / 17.0% | ≥ 99.96% |
 
-**As a column.** For the `full_llm` conversion, the name-only prompt is asked
+### As a column
+
+For the `full_llm` conversion, the name-only prompt is asked
 for every (entity, attribute) cell in the train, validation and test splits, not
 only the test rows. The parsed answers form the `llm_answer` group: one column
 `llm::<a>` per attribute, `NaN` where a cell was not asked. The answer depends
@@ -233,8 +261,10 @@ entity has, so when predicting attribute `a`, every `llm::<b>` with `b` other
 than `a` is masked. The backbone then sees the model's guess for the target as
 one more feature and learns from the context rows how far to trust it.
 
-**Files.** The parsed replies ship, so nothing needs the 16 GB model unless
-these files are deleted:
+### Files
+
+The parsed replies ship, so nothing needs the 16 GB model unless these files
+are deleted:
 
 | File | Contents |
 |---|---|
@@ -245,11 +275,21 @@ these files are deleted:
 
 ### Results: MASE
 
-The median over the 21 attributes of MASE, the MAE divided by that of
-predicting the training median, so 1.00 is no better than the median. The
-direct answers are from one greedy run. Qwen3-8B was trained on web text that
-may state the true values, so the answer-column rows measure what the model
-remembers, not what the graph supports, and are kept apart from the table above.
+MASE is the MAE divided by the MAE of always predicting the attribute's
+training median, so 1.00 means no better than that constant. Each row gives the
+median MASE over the 21 attributes of the main table (more than 40 test rows),
+and how many of them have a MASE below 1. The rows differ in what produces the
+prediction:
+
+| Row | Protocol |
+|---|---|
+| name only, one-hop triples, triples, neighbor values | Qwen3-8B answers each test row from the matching prompt above, in one greedy run. A reply with no number after the retry is scored as the training median. |
+| conversion | The backbone is fitted in context on the `full` table, as in the main results table. MASE is averaged over seeds 1 to 3 per attribute, and an attribute counts only if all three seeds ran. |
+| + answer column | As for conversion, on the `full_llm` table, which adds Qwen3-8B's name-only answers as the `llm::<a>` columns. |
+
+Qwen3-8B was trained on web text that may state the true values. The name-only
+rows and the answer-column rows therefore measure what the model remembers, not
+what the graph supports, and are kept apart from the main table.
 
 <!-- BEGIN GENERATED LLM -->
 | Table or prompt | Learner | Median MASE | MASE < 1 | Attributes |
@@ -295,7 +335,7 @@ From inside the repository:
 # one fit, no weights needed
 python -m src.main run --dataset DB15K --backbone gbt
 
-# the tables below from the shipped results, no GPU needed
+# the tables above from the shipped results, no GPU needed
 python -m src.main report
 
 # everything in the tables, then rewrite them in this file
