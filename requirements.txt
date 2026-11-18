@@ -3,7 +3,7 @@ pandas==2.3.3
 scikit-learn==1.7.2
 scipy==1.18.1
 threadpoolctl==3.7.0
-torch==2.9.0
+torch==2.13.0
 tabpfn==9.2.0
 tabicl==2.2.0
 structured-data-models==0.2.1
