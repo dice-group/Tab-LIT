@@ -1,4 +1,4 @@
-"""Metrics, the published LitEm results, and the result tables.
+"""Metrics, LitEm's own runs, and the result tables.
 
 Errors are never averaged over attributes: they carry different units (years,
 degrees, meters), so a mean over them is dominated by the widest-spread
@@ -102,39 +102,41 @@ def evaluate_predictor(
 
 
 # ----------------------------------------------------------------------
-# Published LitEm results
+# LitEm's own runs
 # ----------------------------------------------------------------------
 
-#: LitEm MAE as printed in the LitEm paper (Table 2 for FB15k-237 and YAGO15k,
-#: Table 4 for DB15K). ``loc.area`` and ``pop._number`` are printed there to
-#: three significant figures. MrAP is not quoted: it is rerun on the same rows
-#: (:mod:`src.mrap`), because the MrAP numbers printed for FB15k-237 and YAGO15k
-#: come from the KGA paper and do not reproduce on these test rows.
-LITEM: Dict[str, Dict[str, float]] = {
-    "DB15K": {
-        "birthDate": 13.212, "completionDate": 4.999, "deathDate": 15.825,
-        "formationDate": 38.772, "foundingDate": 40.270, "height": 0.346,
-        "releaseDate": 9.213, "wgs84_pos#lat": 3.758, "wgs84_pos#long": 11.776,
-    },
-    "YAGO15k": {
-        "diedOnDate": 30.135, "happenedOnDate": 28.260, "hasLatitude": 1.703,
-        "hasLongitude": 5.598, "wasBornOnDate": 13.242,
-        "wasCreatedOnDate": 57.206, "wasDestroyedOnDate": 21.673,
-    },
-    "FB15k-237": {
-        "film.film.initial_release_date": 3.449,
-        "location.dated_location.date_founded": 149.237,
-        "location.geocode.latitude": 2.596,
-        "location.geocode.longitude": 4.424,
-        "location.location.area": 1.37e6,
-        "organization.organization.date_founded": 47.762,
-        "people.deceased_person.date_of_death": 15.752,
-        "people.person.date_of_birth": 11.935,
-        "people.person.height_meters": 0.076,
-        "people.person.weight_kg": 9.442,
-        "topic_server.population_number": 2.33e6,
-    },
-}
+#: The LitEm run read: TransE embeddings, d = 128, MLP regression head.
+LITEM_RUN = "TransE_128_mlp"
+
+
+def litem_scores(literal_results: str, dataset_dir: str) -> pd.DataFrame:
+    """Per-run test MAE, RMSE and R^2 of LitEm, from its own result files.
+
+    ``<literal_results>/<dataset>/TransE_128_mlp/lit_eval_results_n_run.csv``
+    holds MAE and RMSE for each of LitEm's five runs. LitEm saved no predictions, so R^2 is recovered
+    from the RMSE on LitEm's own test rows (the shipped ``literals/test.txt``,
+    unfiltered), against the training mean, as for the backbones.
+    """
+    name = os.path.basename(os.path.normpath(dataset_dir))
+    runs = pd.read_csv(os.path.join(literal_results, name, LITEM_RUN, "lit_eval_results_n_run.csv"))
+    read = lambda part: pd.read_csv(os.path.join(dataset_dir, "literals", f"{part}.txt"), sep="\t",
+                                    header=None, names=["head", "attribute", "value"])
+    test, train = read("test"), read("train")
+    mean = test["attribute"].map(train.groupby("attribute")["value"].mean())
+    spread = ((test["value"] - mean) ** 2).groupby(test["attribute"]).sum()
+    n = test.groupby("attribute").size()
+    rows = []
+    for run in range(1, 1 + sum(c.startswith("MAE_run_") for c in runs)):
+        for _, r in runs.iterrows():
+            a = r["relation"]
+            rmse = r[f"RMSE_run_{run}"]
+            rows.append({"attribute": a, "n": int(n[a]), "MAE": r[f"MAE_run_{run}"], "RMSE": rmse,
+                         "R2": 1.0 - n[a] * rmse ** 2 / spread[a], "seed": run})
+    return pd.DataFrame(rows).assign(dataset=name, backbone="litem", split="test")
+
+
+#: Metric names as printed in the main table.
+METRIC_LABELS = {"MAE": "MAE", "RMSE": "RMSE", "R2": "R²"}
 
 #: Datasets in table order.
 DATASETS = ("FB15k-237", "YAGO15k", "DB15K")
@@ -143,7 +145,7 @@ DATASETS = ("FB15k-237", "YAGO15k", "DB15K")
 #: seed-to-seed noise swamps the differences between methods.
 MIN_TEST_ROWS = 40
 
-#: The LitEm paper's row labels, so the two tables can be lined up.
+#: Short attribute labels for the table rows.
 SHORT = {
     "birthDate": "birthDate", "deathDate": "deathDate", "foundingDate": "foundingDate",
     "releaseDate": "releaseDate", "wgs84_pos#lat": "latitude", "wgs84_pos#long": "longitude",
@@ -177,6 +179,10 @@ def result_path(results_dir: str, dataset: str, backbone: str, conversion: str) 
 
 def mrap_path(results_dir: str, dataset: str) -> str:
     return os.path.join(results_dir, f"{dataset}_mrap.csv")
+
+
+def litem_path(results_dir: str, dataset: str) -> str:
+    return os.path.join(results_dir, f"{dataset}_litem.csv")
 
 
 def llm_direct_path(results_dir: str, dataset: str) -> str:
@@ -214,9 +220,10 @@ def _fmt(x: Optional[float]) -> str:
     return f"{x:.3f}"
 
 
-def _mark(values: Dict[str, Optional[float]], cells: Dict[str, str], second: bool) -> Dict[str, str]:
-    """Bold the lowest value, and italicize the second lowest when ``second``."""
-    ranked = sorted({v for v in values.values() if v is not None and np.isfinite(v)})
+def _mark(values: Dict[str, Optional[float]], cells: Dict[str, str], second: bool,
+          higher: bool = False) -> Dict[str, str]:
+    """Bold the best value, and italicize the second best when ``second``."""
+    ranked = sorted({v for v in values.values() if v is not None and np.isfinite(v)}, reverse=higher)
     out = {}
     for key, value in values.items():
         cell = cells[key]
@@ -237,35 +244,53 @@ def _complete_means(frame: pd.DataFrame, metric: str, seeds: int) -> pd.Series:
 
 def shipped_table(results_dir: str, backbones: Sequence[str], labels: Dict[str, str],
                   seeds: int = 3) -> str:
-    """Main table: test MAE on the shipped splits against LitEm and MrAP."""
+    """Main table: test MAE, RMSE and R^2 on the shipped splits against LitEm and MrAP.
+
+    LitEm is read from its own runs (:func:`litem_scores`) and kept out of the
+    test-row check: on DB15K ``birthDate`` it scores two rows that
+    :func:`load_literal_splits` drops.
+    """
     frame = load_results(results_dir)
-    ours = _complete_means(frame[frame["backbone"] != "mrap"], "MAE", seeds)
-    mrap = frame[frame["backbone"] == "mrap"].groupby(["dataset", "attribute"])["MAE"].mean()
+    litem = pd.concat([pd.read_csv(p) for p in sorted(glob.glob(litem_path(results_dir, "*")))],
+                      ignore_index=True).groupby(["dataset", "attribute"])
+    ours = frame[frame["backbone"] != "mrap"]
+    mrap = frame[frame["backbone"] == "mrap"].groupby(["dataset", "attribute"])
     n = frame.groupby(["dataset", "attribute"])["n"].first()
+    metrics = ("MAE", "RMSE", "R2")
+    means = {m: _complete_means(ours, m, seeds) for m in metrics}
+    mrap_means = {m: mrap[m].mean() for m in metrics}
+    litem_means = {m: litem[m].mean() for m in metrics}
 
     columns = ["LitEm", "MrAP", *backbones]
     lines, wins, total = [], {b: 0 for b in backbones}, 0
-    lines.append("| Attribute | n | " + " | ".join(["LitEm", "MrAP"] + [labels[b] for b in backbones]) + " |")
-    lines.append("|---|---:|" + "---:|" * len(columns))
+    lines.append("| Attribute | n | Metric | " + " | ".join(["LitEm", "MrAP"] + [labels[b] for b in backbones]) + " |")
+    lines.append("|---|---:|---|" + "---:|" * len(columns))
     for dataset in DATASETS:
         rows = [(a, int(k)) for (d, a), k in n.items() if d == dataset and k > MIN_TEST_ROWS]
         if not rows:
             continue
-        lines.append(f"| **{dataset}** |" + " |" * (len(columns) + 1))
+        lines.append(f"| **{dataset}** |" + " |" * (len(columns) + 2))
         for attribute, count in sorted(rows, key=lambda r: -r[1]):
-            scale = 1e6 if attribute in MILLIONS else 1.0
-            values = {"LitEm": LITEM.get(dataset, {}).get(attribute),
-                      "MrAP": mrap.get((dataset, attribute))}
-            for b in backbones:
-                values[b] = ours.get((dataset, attribute, b))
-            total += 1
-            bar = min(v for v in (values["LitEm"], values["MrAP"]) if v is not None)
-            for b in backbones:
-                wins[b] += values[b] is not None and values[b] < bar
-            values = {k: None if v is None else v / scale for k, v in values.items()}
-            cells = _mark(values, {k: _fmt(v) for k, v in values.items()}, second=True)
-            lines.append(f"| {SHORT.get(attribute, attribute)} | {count} | "
-                         + " | ".join(cells[c] for c in columns) + " |")
+            for metric in metrics:
+                values = {"LitEm": litem_means[metric].get((dataset, attribute)),
+                          "MrAP": mrap_means[metric].get((dataset, attribute))}
+                for b in backbones:
+                    values[b] = means[metric].get((dataset, attribute, b))
+                if metric == "MAE":
+                    total += 1
+                    bar = min(v for v in (values["LitEm"], values["MrAP"]) if v is not None)
+                    for b in backbones:
+                        wins[b] += values[b] is not None and values[b] < bar
+                if metric == "R2":
+                    text = {k: "--" if v is None or not np.isfinite(v) else f"{v:.3f}" for k, v in values.items()}
+                else:
+                    scale = 1e6 if attribute in MILLIONS else 1.0
+                    values = {k: None if v is None else v / scale for k, v in values.items()}
+                    text = {k: _fmt(v) for k, v in values.items()}
+                cells = _mark(values, text, second=True, higher=metric == "R2")
+                name = SHORT.get(attribute, attribute) if metric == "MAE" else ""
+                lines.append(f"| {name} | {count if metric == 'MAE' else ''} | {METRIC_LABELS[metric]} | "
+                             + " | ".join(cells[c] for c in columns) + " |")
     summary = "; ".join(f"{labels[b]} {wins[b]}/{total}" for b in backbones)
     return "\n".join(lines) + f"\n\nLower MAE than both LitEm and MrAP: {summary}."
 

@@ -374,7 +374,13 @@ class EntityFeaturiser(ABC):
 
 
 class StructuralFeaturiser(EntityFeaturiser):
-    """Out/in/total degree, PageRank, and Laplacian eigenvectors (G2T-FM's SF)."""
+    """Out/in/total degree, PageRank, and Laplacian eigenvectors.
+
+    These are the structural features G2T-FM (Eremeev et al., 2025,
+    https://arxiv.org/abs/2508.20906) appends to node features before a tabular
+    foundation model: degree and PageRank place an entity by its connectivity,
+    and the eigenvectors give it coordinates in the graph's spectral embedding.
+    """
 
     def __init__(self, num_eigenvectors: int = 14):
         self.num_eigenvectors = num_eigenvectors
@@ -904,7 +910,7 @@ def build_featuriser(
     """Assemble a :class:`CompositeFeaturiser` from feature-group names.
 
     The defaults are those of every reported run: ``k = 14`` eigenvectors, as
-    in G2T-FM, and a ``q = 128`` association SVD. ``llm_answers`` is the answer
+    in G2T-FM (https://arxiv.org/abs/2508.20906), and a ``q = 128`` association SVD. ``llm_answers`` is the answer
     file the ``llm_answer`` group reads.
     """
     registry = {

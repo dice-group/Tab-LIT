@@ -3,7 +3,7 @@
 # the MrAP rerun, the language model's answers, the answer-column runs, then the
 # tables.
 #
-#   MRAP_DIR=/path/to/literal-embeddings/MrAP ./run_all.sh
+#   MRAP_DIR=/path/to/MrAP ./run_all.sh
 #
 # BACKBONES narrows the main panel. Existing result files are skipped, so a run
 # that stops can be restarted. On one RTX 3090, TabPFN-3.5, TabICLv2,
@@ -25,7 +25,7 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}" OPENBLAS_NUM_THREADS="${OPENBLAS_
 "$PYTHON" -u -m src.main experiment --backbones $BACKBONES gbt --conversion full
 "$PYTHON" -u -m src.main experiment --backbones kumo tabpfn gbt --conversion full_llm
 
-: "${MRAP_DIR:?set MRAP_DIR to a literal-embeddings/MrAP checkout (paper-reproduction branch)}"
+: "${MRAP_DIR:?set MRAP_DIR to a directory containing run_mrap.py}"
 [ -f results/DB15K_mrap.csv ] || "$PYTHON" -u -m src.main mrap
 
 "$PYTHON" -u -m src.main report --backbones $BACKBONES --readme

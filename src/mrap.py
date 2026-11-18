@@ -1,14 +1,13 @@
 """Rerun MrAP on the exact test rows this package scores.
 
-MrAP (Bayram et al., 2021) is run from the LitEm authors' script,
-``MrAP/run_mrap.py`` on the ``paper-reproduction`` branch of
-dice-group/literal-embeddings::
+MrAP (Bayram et al., 2021, https://doi.org/10.1109/ICASSP39728.2021.9414016)
+propagates numeric attribute values along relations: for every
+(relation, attribute) pair it estimates an additive offset from entity pairs
+that both carry the attribute, then iteratively fills unknown values from the
+offset-shifted values of neighbors. ``mrap_dir`` must contain ``run_mrap.py``.
 
-    git clone -b paper-reproduction https://github.com/dice-group/literal-embeddings
-
-It follows the released protocol: the per-relation offsets are estimated from
-every literal, validation and test included, over the graph of all relational
-triples, and the test rows are scored.
+The per-relation offsets are estimated from every literal, validation and test
+included, over the graph of all relational triples, and the test rows are scored.
 
 ``torch_scatter`` is used by MrAP only as a 1-D sum; when it is not installed an
 exact ``index_add_`` stand-in is registered.
@@ -62,7 +61,7 @@ def _triples(dataset_dir: str) -> pd.DataFrame:
 
 
 def run_mrap(mrap_dir: str, dataset_dir: str, device: str = "cpu") -> pd.DataFrame:
-    """Per-attribute test MAE and MASE of MrAP on the shipped splits."""
+    """Per-attribute test MAE, RMSE, MASE and R^2 of MrAP on the shipped splits."""
     import torch
 
     run_mrap_module = _import_run_mrap(mrap_dir)
@@ -92,6 +91,10 @@ def run_mrap(mrap_dir: str, dataset_dir: str, device: str = "cpu") -> pd.DataFra
     scores = scores.rename(columns={"relation": "attribute"})
     scores["n"] = scores["attribute"].map(test.groupby("attribute").size())
     scores["MASE"] = scores["MAE"] / scores["attribute"].map(baseline)
-    return scores[["attribute", "n", "MAE", "MASE"]].assign(
+    # R^2 against the training mean, as for the backbones, recovered from the RMSE.
+    spread = ((test["value"] - test["attribute"].map(split.train.groupby("attribute")["value"].mean())) ** 2
+              ).groupby(test["attribute"]).sum()
+    scores["R2"] = 1.0 - scores["n"] * scores["RMSE"] ** 2 / scores["attribute"].map(spread)
+    return scores[["attribute", "n", "MAE", "RMSE", "MASE", "R2"]].assign(
         dataset=name, seed=1, backbone="mrap", split="test",
     )

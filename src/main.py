@@ -3,7 +3,8 @@
     python -m src.main run --dataset DB15K --backbone gbt
     python -m src.main experiment --backbones tabpfn tabicl kumo nori gbt
     python -m src.main experiment --conversion full_llm --backbones kumo tabpfn gbt
-    python -m src.main mrap --mrap_dir ../literal-embeddings/MrAP
+    python -m src.main mrap --mrap_dir <MrAP directory>
+    python -m src.main litem --litem_dir <LitEm result directory>
     python -m src.main llm
     python -m src.main report --readme
 
@@ -19,8 +20,8 @@ import json
 import os
 import re
 
-from .evaluation import (DATASETS, evaluate_predictor, llm_direct_path, llm_table, mrap_path,
-                         result_path, shipped_table)
+from .evaluation import (DATASETS, evaluate_predictor, litem_path, litem_scores, llm_direct_path,
+                         llm_table, mrap_path, result_path, shipped_table)
 from .featurizer import CONVERSIONS, KGIndex, build_featuriser, load_literal_splits
 from .runner import BACKBONE_LABELS, BACKBONES, LLM_ANSWERS, build_predictor, run_experiment
 
@@ -77,11 +78,19 @@ def cmd_mrap(args: argparse.Namespace) -> None:
 
     mrap_dir = args.mrap_dir or os.environ.get("MRAP_DIR")
     if not mrap_dir:
-        raise SystemExit("Pass --mrap_dir or set MRAP_DIR to a literal-embeddings/MrAP checkout.")
+        raise SystemExit("Pass --mrap_dir or set MRAP_DIR to a directory containing run_mrap.py.")
     os.makedirs(RESULTS, exist_ok=True)
     for dataset in args.datasets:
         out = mrap_path(RESULTS, dataset)
         run_mrap(mrap_dir, _dataset_dir(dataset)).to_csv(out, index=False)
+        print(f"wrote {out}")
+
+
+def cmd_litem(args: argparse.Namespace) -> None:
+    os.makedirs(RESULTS, exist_ok=True)
+    for dataset in args.datasets:
+        out = litem_path(RESULTS, dataset)
+        litem_scores(args.litem_dir, _dataset_dir(dataset)).to_csv(out, index=False)
         print(f"wrote {out}")
 
 
@@ -107,23 +116,19 @@ def cmd_llm(args: argparse.Namespace) -> None:
 
 def cmd_report(args: argparse.Namespace) -> None:
     labels = dict(BACKBONE_LABELS)
-    sections = [
-        "### Shipped splits: MAE\n\n" + shipped_table(RESULTS, args.backbones, labels),
-        "### A language model as baseline and as a column: MASE\n\n"
-        + llm_table(RESULTS, LLM_BACKBONES, labels),
-    ]
-    text = "\n\n".join(sections)
-    print(text)
+    tables = {
+        "SHIPPED": shipped_table(RESULTS, args.backbones, labels),
+        "LLM": llm_table(RESULTS, LLM_BACKBONES, labels),
+    }
+    print("\n\n".join(tables.values()))
     if args.readme:
         path = os.path.join(PACKAGE, "README.md")
         readme = open(path).read()
-        block = f"<!-- BEGIN GENERATED TABLES -->\n{text}\n<!-- END GENERATED TABLES -->"
-        readme, count = re.subn(
-            r"<!-- BEGIN GENERATED TABLES -->.*<!-- END GENERATED TABLES -->",
-            lambda _: block, readme, flags=re.S,
-        )
-        if count != 1:
-            raise SystemExit("README.md has no generated-tables block to replace.")
+        for name, text in tables.items():
+            begin, end = f"<!-- BEGIN GENERATED {name} -->", f"<!-- END GENERATED {name} -->"
+            readme, count = re.subn(f"{begin}.*{end}", lambda _: f"{begin}\n{text}\n{end}", readme, flags=re.S)
+            if count != 1:
+                raise SystemExit(f"README.md has no {name} block to replace.")
         open(path, "w").write(readme)
         print(f"\nupdated {path}")
 
@@ -152,6 +157,12 @@ def parse_args() -> argparse.Namespace:
     mrap.add_argument("--mrap_dir", default=None)
     mrap.add_argument("--datasets", nargs="+", default=list(DATASETS))
     mrap.set_defaults(func=cmd_mrap)
+
+    litem = sub.add_parser("litem", help="Read LitEm's own five runs into results/.")
+    litem.add_argument("--litem_dir", required=True,
+                       help="the literal_results folder of the LitEm paper's runs")
+    litem.add_argument("--datasets", nargs="+", default=list(DATASETS))
+    litem.set_defaults(func=cmd_litem)
 
     llm = sub.add_parser("llm", help="Ask the language model; write llm/ and the direct scores.")
     llm.add_argument("--datasets", nargs="+", default=list(DATASETS))
