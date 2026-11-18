@@ -8,5 +8,5 @@ tabpfn==9.2.0
 tabicl==2.2.0
 structured-data-models==0.2.1
 synthefy-nori==0.22.0
-transformers==4.57.3
+transformers==5.10.1
 pytest>=7.0
