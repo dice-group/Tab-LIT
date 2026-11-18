@@ -1,0 +1,12 @@
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+llm/cache/
+!results/
+!results/*.csv
+!results/*.json
+!llm/
+!llm/*.csv

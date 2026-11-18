@@ -1,0 +1,33 @@
+{
+  "dataset": "YAGO15k",
+  "backbone": "tabpfn",
+  "conversion": "full",
+  "groups": [
+    "structural",
+    "association",
+    "neighbor_literal",
+    "mrap_prior",
+    "own_literal"
+  ],
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "seconds_per_seed": {
+    "1": 25.4,
+    "2": 25.2,
+    "3": 25.5
+  },
+  "package_versions": {
+    "tabpfn": "9.2.0",
+    "tabicl": "2.2.0",
+    "structured-data-models": "0.2.1",
+    "synthefy-nori": "0.22.0",
+    "torch": "2.9.0",
+    "scikit-learn": "1.7.2",
+    "numpy": "2.5.4",
+    "pandas": "2.3.3",
+    "scipy": "1.18.1"
+  }
+}
